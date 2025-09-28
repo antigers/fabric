@@ -16,6 +16,7 @@
 
 package net.fabricmc.fabric.api.attachment.v1;
 
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
@@ -24,6 +25,8 @@ import org.jetbrains.annotations.ApiStatus;
 
 import net.minecraft.network.RegistryByteBuf;
 import net.minecraft.network.codec.PacketCodec;
+import net.minecraft.storage.ReadView;
+import net.minecraft.storage.WriteView;
 import net.minecraft.util.Identifier;
 
 import net.fabricmc.fabric.impl.attachment.AttachmentRegistryImpl;
@@ -127,6 +130,17 @@ public final class AttachmentRegistry {
 		Builder<A> persistent(Codec<A> codec);
 
 		/**
+		 * Declares that attachments should persist between server restarts, using the provided lambdas for
+		 * (de)serialization.
+		 * An initializer must be provided when using this method.
+		 *
+		 * @param serializer the lambda used for serialization of attachment data
+		 * @param deserializer the lambda used for deserialization of attachment data
+		 * @return the builder
+		 */
+		Builder<A> persistent(BiConsumer<A, WriteView> serializer, BiConsumer<A, ReadView> deserializer);
+
+		/**
 		 * Declares that when a player dies and respawns or when a mob is converted (e.g. zombie → drowned), the attachments of this type should remain.
 		 *
 		 * @return the builder
@@ -157,7 +171,20 @@ public final class AttachmentRegistry {
 		 * @param syncPredicate an {@link AttachmentSyncPredicate} determining with which clients to synchronize data
 		 * @return the builder
 		 */
-		AttachmentRegistry.Builder<A> syncWith(PacketCodec<? super RegistryByteBuf, A> packetCodec, AttachmentSyncPredicate syncPredicate);
+		Builder<A> syncWith(PacketCodec<? super RegistryByteBuf, A> packetCodec, AttachmentSyncPredicate syncPredicate);
+
+		/**
+		 * Declares that this attachment type may be automatically synchronized with some clients, as determined by {@code syncPredicate}.
+		 * An initializer must be provided when using this method.
+		 *
+		 * @param serializer the lambda used for serialization of attachment data
+		 * @param deserializer the lambda used for deserialization of attachment data
+		 * @param syncPredicate an {@link AttachmentSyncPredicate} determining with which clients to synchronize data
+		 * @return the builder
+		 */
+		Builder<A> syncWith(
+				BiConsumer<A, WriteView> serializer, BiConsumer<A, ReadView> deserializer, AttachmentSyncPredicate syncPredicate
+		);
 
 		/**
 		 * Builds and registers the {@link AttachmentType}.

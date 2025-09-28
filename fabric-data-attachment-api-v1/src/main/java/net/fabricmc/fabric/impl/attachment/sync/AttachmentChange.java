@@ -21,10 +21,13 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.BiConsumer;
+import java.util.function.Supplier;
 
 import io.netty.buffer.Unpooled;
 import org.jetbrains.annotations.Nullable;
 
+import net.minecraft.nbt.NbtCompound;
 import net.minecraft.network.PacketByteBuf;
 import net.minecraft.network.RegistryByteBuf;
 import net.minecraft.network.codec.PacketCodec;
@@ -32,6 +35,8 @@ import net.minecraft.network.codec.PacketCodecs;
 import net.minecraft.registry.DynamicRegistryManager;
 import net.minecraft.screen.ScreenTexts;
 import net.minecraft.server.network.ServerPlayerEntity;
+import net.minecraft.storage.ReadView;
+import net.minecraft.storage.WriteView;
 import net.minecraft.text.MutableText;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
@@ -43,6 +48,7 @@ import net.fabricmc.fabric.api.attachment.v1.AttachmentType;
 import net.fabricmc.fabric.api.networking.v1.PacketByteBufs;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.fabricmc.fabric.impl.attachment.AttachmentRegistryImpl;
+import net.fabricmc.fabric.impl.attachment.AttachmentSerializingImpl;
 import net.fabricmc.fabric.impl.attachment.AttachmentTypeImpl;
 import net.fabricmc.fabric.impl.attachment.sync.s2c.AttachmentSyncPayloadS2C;
 import net.fabricmc.fabric.mixin.attachment.CustomPayloadC2SPacketAccessor;
@@ -63,16 +69,30 @@ public record AttachmentChange(AttachmentTargetInfo<?> targetInfo, AttachmentTyp
 	private static final int MAX_DATA_SIZE_IN_BYTES = CustomPayloadC2SPacketAccessor.getMaxPayloadSize() - MAX_PADDING_SIZE_IN_BYTES;
 
 	@SuppressWarnings("unchecked")
+	private static void encodeValue(AttachmentType<?> type, Object value, RegistryByteBuf buf) {
+		AttachmentTypeImpl<Object> typeImpl = (AttachmentTypeImpl<Object>) type;
+		PacketCodec<? super RegistryByteBuf, Object> codec = typeImpl.packetCodec();
+
+		if (codec != null) {
+			codec.encode(buf, value);
+			return;
+		}
+
+		BiConsumer<Object, WriteView> serializer = typeImpl.syncSerializer();
+		Objects.requireNonNull(serializer, "both packetCodec and serializer cannot be null");
+		NbtCompound nbtCompound = AttachmentSerializingImpl.serializeAttachment(value, serializer);
+		PacketCodecs.NBT_COMPOUND.encode(buf, nbtCompound);
+	}
+
+	@SuppressWarnings("unchecked")
 	public static AttachmentChange create(AttachmentTargetInfo<?> targetInfo, AttachmentType<?> type, @Nullable Object value, DynamicRegistryManager dynamicRegistryManager) {
-		PacketCodec<? super RegistryByteBuf, Object> codec = (PacketCodec<? super RegistryByteBuf, Object>) ((AttachmentTypeImpl<?>) type).packetCodec();
-		Objects.requireNonNull(codec, "attachment packet codec cannot be null");
 		Objects.requireNonNull(dynamicRegistryManager, "dynamic registry manager cannot be null");
 
 		RegistryByteBuf buf = new RegistryByteBuf(PacketByteBufs.create(), dynamicRegistryManager);
 
 		if (value != null) {
 			buf.writeBoolean(true);
-			codec.encode(buf, value);
+			encodeValue(type, value, buf);
 		} else {
 			buf.writeBoolean(false);
 		}
@@ -123,23 +143,36 @@ public record AttachmentChange(AttachmentTargetInfo<?> targetInfo, AttachmentTyp
 
 	@SuppressWarnings("unchecked")
 	@Nullable
-	public Object decodeValue(DynamicRegistryManager dynamicRegistryManager) {
-		PacketCodec<? super RegistryByteBuf, Object> codec = (PacketCodec<? super RegistryByteBuf, Object>) ((AttachmentTypeImpl<?>) type).packetCodec();
-		Objects.requireNonNull(codec, "codec was null");
+	private Object decodeValue(AttachmentTarget target, DynamicRegistryManager dynamicRegistryManager) {
 		Objects.requireNonNull(dynamicRegistryManager, "dynamic registry manager cannot be null");
-
 		RegistryByteBuf buf = new RegistryByteBuf(Unpooled.copiedBuffer(data), dynamicRegistryManager);
 
 		if (!buf.readBoolean()) {
 			return null;
 		}
 
-		return codec.decode(buf);
+		AttachmentTypeImpl<Object> typeImpl = (AttachmentTypeImpl<Object>) type;
+		PacketCodec<? super RegistryByteBuf, Object> codec = typeImpl.packetCodec();
+
+		if (codec != null) {
+			return codec.decode(buf);
+		}
+
+		BiConsumer<Object, ReadView> deserializer = typeImpl.syncDeserializer();
+		Objects.requireNonNull(deserializer, "both packetCodec and syncDeserializer cannot be null");
+		NbtCompound nbtCompound = PacketCodecs.NBT_COMPOUND.decode(buf);
+		Object attachmentData = target.getAttached(type);
+		if (attachmentData == null) {
+			Supplier<?> initializer = type.initializer();
+			Objects.requireNonNull(initializer, "initializer cannot be null when using syncDeserializer");
+			attachmentData = initializer.get();
+		}
+		AttachmentSerializingImpl.deserializeAttachment(attachmentData, nbtCompound, deserializer);
+		return attachmentData;
 	}
 
 	public void tryApply(World world) throws AttachmentSyncException {
 		AttachmentTarget target = targetInfo.getTarget(world);
-		Object value = decodeValue(world.getRegistryManager());
 
 		if (target == null) {
 			final MutableText errorMessageText = Text.empty();
@@ -165,6 +198,7 @@ public record AttachmentChange(AttachmentTargetInfo<?> targetInfo, AttachmentTyp
 			throw new AttachmentSyncException(errorMessageText);
 		}
 
+		Object value = decodeValue(target, world.getRegistryManager());
 		target.setAttached((AttachmentType<Object>) type, value);
 	}
 }

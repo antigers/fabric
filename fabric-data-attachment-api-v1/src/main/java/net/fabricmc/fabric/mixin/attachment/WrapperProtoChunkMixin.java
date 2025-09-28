@@ -61,6 +61,11 @@ abstract class WrapperProtoChunkMixin extends AttachmentTargetsMixin {
 	}
 
 	@Override
+	public <T> void syncAttached(AttachmentType<T> type) {
+		this.wrapped.syncAttached(type);
+	}
+
+	@Override
 	public void fabric_writeAttachmentsToNbt(WriteView view) {
 		((AttachmentTargetImpl) this.wrapped).fabric_writeAttachmentsToNbt(view);
 	}

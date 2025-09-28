@@ -90,13 +90,7 @@ abstract class AttachmentTargetsMixin implements AttachmentTargetImpl {
 		}
 
 		if (!Objects.equals(oldValue, value)) {
-			this.fabric_markChanged(type);
-
-			if (this.fabric_shouldTryToSync() && type.isSynced()) {
-				AttachmentChange change = AttachmentChange.create(fabric_getSyncTargetInfo(), type, value, fabric_getDynamicRegistryManager());
-				acknowledgeSyncedEntry(type, change);
-				this.fabric_syncChange(type, new AttachmentSyncPayloadS2C(List.of(change)));
-			}
+			syncAttached(type);
 		}
 
 		return oldValue;
@@ -120,6 +114,19 @@ abstract class AttachmentTargetsMixin implements AttachmentTargetImpl {
 				}
 			});
 		});
+	}
+
+	@Override
+	public <T> void syncAttached(AttachmentType<T> type) {
+		this.fabric_markChanged(type);
+
+		if (this.fabric_shouldTryToSync() && type.isSynced()) {
+			AttachmentChange change = AttachmentChange.create(
+					fabric_getSyncTargetInfo(), type, getAttached(type), fabric_getDynamicRegistryManager()
+			);
+			acknowledgeSyncedEntry(type, change);
+			this.fabric_syncChange(type, new AttachmentSyncPayloadS2C(List.of(change)));
+		}
 	}
 
 	@Override

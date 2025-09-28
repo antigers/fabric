@@ -18,6 +18,7 @@ package net.fabricmc.fabric.impl.attachment;
 
 import java.util.IdentityHashMap;
 import java.util.Map;
+import java.util.function.BiConsumer;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -27,8 +28,13 @@ import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import net.minecraft.nbt.NbtCompound;
+import net.minecraft.registry.DynamicRegistryManager;
+import net.minecraft.storage.NbtReadView;
+import net.minecraft.storage.NbtWriteView;
 import net.minecraft.storage.ReadView;
 import net.minecraft.storage.WriteView;
+import net.minecraft.util.ErrorReporter;
 import net.minecraft.util.Identifier;
 
 import net.fabricmc.fabric.api.attachment.v1.AttachmentTarget;
@@ -91,5 +97,21 @@ public class AttachmentSerializingImpl {
 		}
 
 		return false;
+	}
+
+	public static <A> NbtCompound serializeAttachment(A attachmentData, BiConsumer<A, WriteView> serializer) {
+		try (ErrorReporter.Logging reporter = new ErrorReporter.Logging(LOGGER)) {
+			NbtWriteView writeView = NbtWriteView.create(reporter);
+			serializer.accept(attachmentData, writeView);
+			return writeView.getNbt();
+		}
+	}
+
+	public static <A> A deserializeAttachment(A attachmentData, NbtCompound nbtCompound, BiConsumer<A, ReadView> deserializer) {
+		try (ErrorReporter.Logging reporter = new ErrorReporter.Logging(LOGGER)) {
+			ReadView readView = NbtReadView.create(reporter, DynamicRegistryManager.EMPTY, nbtCompound);
+			deserializer.accept(attachmentData, readView);
+		}
+		return attachmentData;
 	}
 }

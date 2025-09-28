@@ -248,6 +248,17 @@ public interface AttachmentTarget {
 		return setAttached(type, modifier.apply(getAttached(type)));
 	}
 
+	/**
+	 * Tries to synchronize the data associated with the given {@link AttachmentType}. Clients that it synchronizes with
+	 * are determined by {@link AttachmentSyncPredicate} that is registered for the given {@link AttachmentType}
+	 *
+	 * @param type  the attachment type
+	 * @param <A>   the type of the data
+	 */
+	default <A> void syncAttached(AttachmentType<A> type) {
+		throw new UnsupportedOperationException("Implemented via mixin");
+	}
+
 	@FunctionalInterface
 	interface OnAttachedSet<A> {
 		/**
