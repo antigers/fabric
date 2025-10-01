@@ -18,6 +18,7 @@ package net.fabricmc.fabric.api.attachment.v1;
 
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.Supplier;
 
 import com.mojang.serialization.Codec;
@@ -130,12 +131,12 @@ public final class AttachmentRegistry {
 		Builder<A> persistent(Codec<A> codec);
 
 		/**
-		 * Declares that attachments should persist between server restarts, using the provided lambdas for
+		 * Declares that attachments should persist between server restarts, using the provided callables for
 		 * (de)serialization.
 		 * An initializer must be provided when using this method.
 		 *
-		 * @param serializer the lambda used for serialization of attachment data
-		 * @param deserializer the lambda used for deserialization of attachment data
+		 * @param serializer the callable used for serialization of attachment data
+		 * @param deserializer the callable used for deserialization of attachment data
 		 * @return the builder
 		 */
 		Builder<A> persistent(BiConsumer<A, WriteView> serializer, BiConsumer<A, ReadView> deserializer);
@@ -165,6 +166,19 @@ public final class AttachmentRegistry {
 		Builder<A> initializer(Supplier<A> initializer);
 
 		/**
+		 * Sets the default initializer for this attachment type. The initializer will be called by
+		 * {@link AttachmentTarget#getAttachedOrCreate(AttachmentType)} to automatically initialize attachments that
+		 * don't yet exist. It must not return {@code null}.
+		 *
+		 * <p>targetedInitializer should be used instead of basic initializer when a reference to {@link AttachmentTarget}
+		 * is needed inside the attachment data class.
+		 *
+		 * @param targetedInitializer the initializer
+		 * @return the builder
+		 */
+		Builder<A> initializer(Function<AttachmentTarget, A> targetedInitializer);
+
+		/**
 		 * Declares that this attachment type may be automatically synchronized with some clients, as determined by {@code syncPredicate}.
 		 *
 		 * @param packetCodec the codec used to serialize the attachment data over the network
@@ -177,8 +191,8 @@ public final class AttachmentRegistry {
 		 * Declares that this attachment type may be automatically synchronized with some clients, as determined by {@code syncPredicate}.
 		 * An initializer must be provided when using this method.
 		 *
-		 * @param serializer the lambda used for serialization of attachment data
-		 * @param deserializer the lambda used for deserialization of attachment data
+		 * @param serializer the callable used for serialization of attachment data
+		 * @param deserializer the callable used for deserialization of attachment data
 		 * @param syncPredicate an {@link AttachmentSyncPredicate} determining with which clients to synchronize data
 		 * @return the builder
 		 */

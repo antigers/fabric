@@ -17,6 +17,7 @@
 package net.fabricmc.fabric.impl.attachment;
 
 import java.util.function.BiConsumer;
+import java.util.function.Function;
 import java.util.function.Supplier;
 
 import com.mojang.serialization.Codec;
@@ -29,12 +30,16 @@ import net.minecraft.storage.WriteView;
 import net.minecraft.util.Identifier;
 
 import net.fabricmc.fabric.api.attachment.v1.AttachmentSyncPredicate;
+import net.fabricmc.fabric.api.attachment.v1.AttachmentTarget;
 import net.fabricmc.fabric.api.attachment.v1.AttachmentType;
 
 public record AttachmentTypeImpl<A>(
 		Identifier identifier,
 		@Nullable Supplier<A> initializer,
+		@Nullable Function<AttachmentTarget, A> targetedInitializer,
 		@Nullable Codec<A> persistenceCodec,
+		@Nullable BiConsumer<A, WriteView> persistenceSerializer,
+		@Nullable BiConsumer<A, ReadView> persistenceDeserializer,
 		@Nullable PacketCodec<? super RegistryByteBuf, A> packetCodec,
 		@Nullable BiConsumer<A, WriteView> syncSerializer,
 		@Nullable BiConsumer<A, ReadView> syncDeserializer,

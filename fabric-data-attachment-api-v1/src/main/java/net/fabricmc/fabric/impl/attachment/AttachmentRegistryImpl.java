@@ -23,6 +23,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.BiConsumer;
+import java.util.function.Function;
 import java.util.function.Supplier;
 
 import com.mojang.serialization.Codec;
@@ -30,7 +31,6 @@ import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import net.minecraft.nbt.NbtCompound;
 import net.minecraft.network.RegistryByteBuf;
 import net.minecraft.network.codec.PacketCodec;
 import net.minecraft.storage.ReadView;
@@ -39,6 +39,7 @@ import net.minecraft.util.Identifier;
 
 import net.fabricmc.fabric.api.attachment.v1.AttachmentRegistry;
 import net.fabricmc.fabric.api.attachment.v1.AttachmentSyncPredicate;
+import net.fabricmc.fabric.api.attachment.v1.AttachmentTarget;
 import net.fabricmc.fabric.api.attachment.v1.AttachmentType;
 import net.fabricmc.fabric.impl.attachment.sync.AttachmentSync;
 
@@ -82,7 +83,13 @@ public final class AttachmentRegistryImpl {
 		@Nullable
 		private Supplier<A> defaultInitializer = null;
 		@Nullable
+		private Function<AttachmentTarget, A> defaultTargetedInitializer = null;
+		@Nullable
 		private Codec<A> persistenceCodec = null;
+		@Nullable
+		private BiConsumer<A, WriteView> persistenceSerializer = null;
+		@Nullable
+		private BiConsumer<A, ReadView> persistenceDeserializer = null;
 		@Nullable
 		private PacketCodec<? super RegistryByteBuf, A> packetCodec = null;
 		@Nullable
@@ -107,13 +114,8 @@ public final class AttachmentRegistryImpl {
 			Objects.requireNonNull(serializer, "serializer cannot be null");
 			Objects.requireNonNull(deserializer, "deserializer cannot be null");
 
-			this.persistenceCodec = NbtCompound.CODEC.xmap(
-					nbtCompound -> AttachmentSerializingImpl.deserializeAttachment(
-							defaultInitializer.get(), nbtCompound, deserializer
-					),
-					attachmentData -> AttachmentSerializingImpl.serializeAttachment(attachmentData, serializer)
-			);
-
+			this.persistenceSerializer = serializer;
+			this.persistenceDeserializer = deserializer;
 			this.initializerRequired = true;
 			return this;
 		}
@@ -129,6 +131,14 @@ public final class AttachmentRegistryImpl {
 			Objects.requireNonNull(initializer, "initializer cannot be null");
 
 			this.defaultInitializer = initializer;
+			return this;
+		}
+
+		@Override
+		public AttachmentRegistry.Builder<A> initializer(Function<AttachmentTarget, A> targetedInitializer) {
+			Objects.requireNonNull(targetedInitializer, "targetedInitializer cannot be null");
+
+			this.defaultTargetedInitializer = targetedInitializer;
 			return this;
 		}
 
@@ -170,7 +180,7 @@ public final class AttachmentRegistryImpl {
 				);
 			}
 
-			if (initializerRequired && defaultInitializer == null) {
+			if (initializerRequired && defaultInitializer == null && defaultTargetedInitializer == null) {
 				throw new IllegalStateException(
 						"Default value initializer was not provided for the attachment with id %s. ".formatted(id) +
 								"It is required when building persistent or synced attachment with (de)serializers"
@@ -180,7 +190,10 @@ public final class AttachmentRegistryImpl {
 			var attachment = new AttachmentTypeImpl<>(
 					id,
 					defaultInitializer,
+					defaultTargetedInitializer,
 					persistenceCodec,
+					persistenceSerializer,
+					persistenceDeserializer,
 					packetCodec,
 					syncSerializer,
 					syncDeserializer,

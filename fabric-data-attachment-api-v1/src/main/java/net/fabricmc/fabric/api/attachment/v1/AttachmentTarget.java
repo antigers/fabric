@@ -17,6 +17,7 @@
 package net.fabricmc.fabric.api.attachment.v1;
 
 import java.util.Objects;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.function.UnaryOperator;
 
@@ -135,6 +136,19 @@ public interface AttachmentTarget {
 	}
 
 	/**
+	 * Gets the data associated with the given {@link AttachmentType}, or initializes it using the non-{@code null} result
+	 * of the provided {@link Function}.
+	 *
+	 * @param type        the attachment type
+	 * @param targetedInitializer the fallback initializer that receives this target as an argument
+	 * @param <A>         the type of the data
+	 * @return the attached data, initialized if originally absent
+	 */
+	default <A> A getAttachedOrCreate(AttachmentType<A> type, Function<AttachmentTarget, A> targetedInitializer) {
+		return getAttachedOrCreate(type, () -> targetedInitializer.apply(this));
+	}
+
+	/**
 	 * Specialization of {@link #getAttachedOrCreate(AttachmentType, Supplier)}, but <i>only for attachment types with
 	 * {@link AttachmentType#initializer() initializers}.</i> It will throw an exception if one is not present.
 	 *
@@ -143,10 +157,15 @@ public interface AttachmentTarget {
 	 * @return the attached data, initialized if originally absent
 	 */
 	default <A> A getAttachedOrCreate(AttachmentType<A> type) {
-		Supplier<A> init = type.initializer();
-
-		if (init == null) {
-			throw new IllegalArgumentException("Single-argument getAttachedOrCreate is reserved for attachment types with default initializers");
+		Supplier<A> init;
+		Function<AttachmentTarget, A> targetedInit = type.targetedInitializer();
+		if (targetedInit != null) {
+			init = () -> targetedInit.apply(this);
+		} else {
+			init = type.initializer();
+			if (init == null) {
+				throw new IllegalArgumentException("Single-argument getAttachedOrCreate is reserved for attachment types with default initializers");
+			}
 		}
 
 		return getAttachedOrCreate(type, init);

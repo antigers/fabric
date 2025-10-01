@@ -18,8 +18,10 @@ package net.fabricmc.fabric.impl.attachment;
 
 import java.util.IdentityHashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 import com.mojang.serialization.Codec;
@@ -46,18 +48,35 @@ public class AttachmentSerializingImpl {
 	private static final Codec<AttachmentType<?>> TYPE_CODEC = Identifier.CODEC.comapFlatMap(id -> {
 		AttachmentType<?> type = AttachmentRegistryImpl.get(id);
 		return type == null ? DataResult.error(() -> "Found unknown attachment type " + id)
-				: type.persistenceCodec() == null ? DataResult.error(() -> "Found non-permanent attachment type " + id)
+				: !type.isPersistent() ? DataResult.error(() -> "Found non-permanent attachment type " + id)
 				: DataResult.success(type);
 	}, AttachmentType::identifier);
-	private static final Codec<IdentityHashMap<AttachmentType<?>, Object>> CODEC = Codec.<AttachmentType<?>, Object>dispatchedMap(
-			TYPE_CODEC,
-			AttachmentType::persistenceCodec
-	)
-			.promotePartial(error -> LOGGER.warn("Skipping invalid attachments: {}", error))
-			.xmap(
-				IdentityHashMap::new,
-				Function.identity()
-	);
+
+	private static final Codec<IdentityHashMap<AttachmentType<?>, Object>> SERIALIZATION_CODEC = getCodec(type -> {
+		Codec<?> persistenceCodec = type.persistenceCodec();
+		if (persistenceCodec != null) {
+			return persistenceCodec;
+		}
+		return NbtCompound.CODEC.comapFlatMap(
+				nbtCompound -> DataResult.error(() -> "This codec can only be used for serialization"),
+				attachmentData -> {
+					BiConsumer<?, WriteView> serializer = type.persistenceSerializer();
+					Objects.requireNonNull(
+							serializer, "persistenceSerializer cannot be null when trying to persist an attachment without persistenceCodec"
+					);
+					return serializeAttachment(attachmentData, (BiConsumer<Object, WriteView>) serializer);
+				}
+		);
+	});
+
+	private static Codec<IdentityHashMap<AttachmentType<?>, Object>> getCodec(Function<AttachmentType<?>, Codec<?>> valueCodecFunction) {
+		return Codec.dispatchedMap(TYPE_CODEC, valueCodecFunction)
+				.promotePartial(error -> LOGGER.warn("Skipping invalid attachments: {}", error))
+				.xmap(
+						IdentityHashMap::new,
+						Function.identity()
+				);
+	}
 
 	public static void serializeAttachmentData(WriteView view, @Nullable IdentityHashMap<AttachmentType<?>, Object> attachments) {
 		if (attachments == null || attachments.isEmpty()) {
@@ -65,24 +84,57 @@ public class AttachmentSerializingImpl {
 		}
 
 		IdentityHashMap<AttachmentType<?>, Object> attachmentsToSerialize = attachments.entrySet().stream()
-				.filter(entry -> entry.getKey().persistenceCodec() != null)
+				.filter(entry -> entry.getKey().isPersistent())
 				.collect(Collectors.toMap(
-					Map.Entry::getKey,
-					Map.Entry::getValue,
-					(v1, v2) -> v1,
-					IdentityHashMap::new
+						Map.Entry::getKey,
+						Map.Entry::getValue,
+						(v1, v2) -> v1,
+						IdentityHashMap::new
 				));
 
 		if (attachmentsToSerialize.isEmpty()) {
 			return;
 		}
 
-		view.put(AttachmentTarget.NBT_ATTACHMENT_KEY, CODEC, attachmentsToSerialize);
+		view.put(AttachmentTarget.NBT_ATTACHMENT_KEY, SERIALIZATION_CODEC, attachmentsToSerialize);
 	}
 
 	@Nullable
-	public static IdentityHashMap<AttachmentType<?>, Object> deserializeAttachmentData(@Nullable ReadView data) {
-		return data == null ? null : data.read(AttachmentTarget.NBT_ATTACHMENT_KEY, CODEC).filter(m -> !m.isEmpty()).orElse(null);
+	public static IdentityHashMap<AttachmentType<?>, Object> deserializeAttachmentData(AttachmentTarget attachmentTarget, @Nullable ReadView data) {
+		if (data == null) {
+			return null;
+		}
+		return data.read(AttachmentTarget.NBT_ATTACHMENT_KEY, getCodec(type -> {
+					Codec<?> persistenceCodec = type.persistenceCodec();
+					if (persistenceCodec != null) {
+						return persistenceCodec;
+					}
+					return NbtCompound.CODEC.flatComapMap(
+							nbtCompound -> applyPersistenceDeserializer(attachmentTarget, type, nbtCompound),
+							attachmentData -> DataResult.error(() -> "This codec can only be used for deserialization")
+					);
+				}))
+				.filter(m -> !m.isEmpty())
+				.orElse(null);
+	}
+
+	private static <A> A applyPersistenceDeserializer(AttachmentTarget target, AttachmentType<A> type, NbtCompound nbtCompound) {
+		BiConsumer<A, ReadView> deserializer = type.persistenceDeserializer();
+		Objects.requireNonNull(
+				deserializer, "persistenceDeserializer cannot be null when trying to persist an attachment without persistenceCodec"
+		);
+		A attachmentData;
+		Function<AttachmentTarget, A> targetedInitializer = type.targetedInitializer();
+		if (targetedInitializer != null) {
+			attachmentData = targetedInitializer.apply(target);
+		} else {
+			Supplier<A> initializer = type.initializer();
+			Objects.requireNonNull(
+					initializer, "either initializer or targetedInitializer must be present when using persistenceDeserializer"
+			);
+			attachmentData = initializer.get();
+		}
+		return deserializeAttachment(attachmentData, nbtCompound, deserializer);
 	}
 
 	public static boolean hasPersistentAttachments(@Nullable IdentityHashMap<AttachmentType<?>, ?> map) {
@@ -99,7 +151,7 @@ public class AttachmentSerializingImpl {
 		return false;
 	}
 
-	public static <A> NbtCompound serializeAttachment(A attachmentData, BiConsumer<A, WriteView> serializer) {
+	public static NbtCompound serializeAttachment(Object attachmentData, BiConsumer<Object, WriteView> serializer) {
 		try (ErrorReporter.Logging reporter = new ErrorReporter.Logging(LOGGER)) {
 			NbtWriteView writeView = NbtWriteView.create(reporter);
 			serializer.accept(attachmentData, writeView);

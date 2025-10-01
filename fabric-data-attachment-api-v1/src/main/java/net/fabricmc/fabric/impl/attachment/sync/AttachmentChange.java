@@ -22,6 +22,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.BiConsumer;
+import java.util.function.Function;
 import java.util.function.Supplier;
 
 import io.netty.buffer.Unpooled;
@@ -163,9 +164,16 @@ public record AttachmentChange(AttachmentTargetInfo<?> targetInfo, AttachmentTyp
 		NbtCompound nbtCompound = PacketCodecs.NBT_COMPOUND.decode(buf);
 		Object attachmentData = target.getAttached(type);
 		if (attachmentData == null) {
-			Supplier<?> initializer = type.initializer();
-			Objects.requireNonNull(initializer, "initializer cannot be null when using syncDeserializer");
-			attachmentData = initializer.get();
+			Function<AttachmentTarget, ?> targetedInitializer = type.targetedInitializer();
+			if (targetedInitializer != null) {
+				attachmentData = targetedInitializer.apply(target);
+			} else {
+				Supplier<?> initializer = type.initializer();
+				Objects.requireNonNull(
+						initializer, "either initializer or targetedInitializer must be present when using syncDeserializer"
+				);
+				attachmentData = initializer.get();
+			}
 		}
 		AttachmentSerializingImpl.deserializeAttachment(attachmentData, nbtCompound, deserializer);
 		return attachmentData;

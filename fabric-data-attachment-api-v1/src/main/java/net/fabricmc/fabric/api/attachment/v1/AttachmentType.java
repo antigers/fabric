@@ -16,6 +16,8 @@
 
 package net.fabricmc.fabric.api.attachment.v1;
 
+import java.util.function.BiConsumer;
+import java.util.function.Function;
 import java.util.function.Supplier;
 
 import com.mojang.serialization.Codec;
@@ -25,6 +27,8 @@ import org.jetbrains.annotations.Nullable;
 import net.minecraft.entity.Entity;
 import net.minecraft.network.codec.PacketCodec;
 import net.minecraft.server.world.ServerWorld;
+import net.minecraft.storage.ReadView;
+import net.minecraft.storage.WriteView;
 import net.minecraft.util.Identifier;
 import net.minecraft.world.chunk.Chunk;
 import net.minecraft.world.chunk.ProtoChunk;
@@ -75,10 +79,26 @@ public interface AttachmentType<A> {
 	Codec<A> persistenceCodec();
 
 	/**
+	 * A callable used for writing attachments' data to NBT for persistence.
+	 *
+	 * @return the serializer callable, may be null
+	 */
+	@Nullable
+	BiConsumer<A, WriteView> persistenceSerializer();
+
+	/**
+	 * A callable used for reading attachments' data from NBT for persistence.
+	 *
+	 * @return the serializer callable, may be null
+	 */
+	@Nullable
+	BiConsumer<A, ReadView> persistenceDeserializer();
+
+	/**
 	 * @return whether the attachments persist across server restarts
 	 */
 	default boolean isPersistent() {
-		return persistenceCodec() != null;
+		return persistenceCodec() != null || (persistenceSerializer() != null && persistenceDeserializer() != null);
 	}
 
 	/**
@@ -96,6 +116,18 @@ public interface AttachmentType<A> {
 	 */
 	@Nullable
 	Supplier<A> initializer();
+
+	/**
+	 * If an object has no value associated to an attachment,
+	 * this initializer is used to create a non-{@code null} starting value.
+	 *
+	 * <p>targetedInitializer should be used instead of basic initializer when a link to {@link AttachmentTarget} is
+	 * needed inside the attachment data class.
+	 *
+	 * @return the targetedInitializer for this attachment
+	 */
+	@Nullable
+	Function<AttachmentTarget, A> targetedInitializer();
 
 	/**
 	 * Whether this attachment type can be synchronized with clients. This method returning {@code true} does not in any way
